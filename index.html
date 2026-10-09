@@ -396,7 +396,6 @@ dialog h3{margin:18px 0 6px;font-size:14px;color:var(--slate)}
   <div class="codebox" id="adNew" hidden><b id="adNewCode"></b><button type="button" class="btn ghost sm" id="adCopy">Copy code</button></div>
   <h3>Invite codes</h3><div id="adCodes"></div>
   <h3>Agents</h3><div id="adAgents"></div>
-  <div id="adDetail" hidden style="margin-top:10px"></div>
   <h3>Activity history</h3>
   <p class="hint" style="margin:0 0 8px">Every login, change, download and results entry by agents. Entries are stamped with server time and nobody can edit or delete them.</p>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
@@ -405,7 +404,24 @@ dialog h3{margin:18px 0 6px;font-size:14px;color:var(--slate)}
     <button type="button" class="btn ghost sm" id="adActCsv">Export CSV</button>
   </div>
   <div id="adAct" style="max-height:340px;overflow:auto"></div>
+  <h3>Downloaded posts</h3>
+  <p class="hint" style="margin:0 0 8px">A copy of every slide an agent downloads, with the final text they used. View it or download it. Videos are logged above but the video file itself is not stored.</p>
+  <div id="adDl" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px"></div>
+  <div style="margin-top:10px"><button type="button" class="btn ghost sm" id="adDlMore">Load more</button></div>
   <div class="actions"><button type="button" class="btn ghost" id="adClose">Close</button></div>
+</dialog>
+
+<dialog id="viewDlg" style="max-width:760px">
+  <h2 id="vTitle">Downloaded post</h2>
+  <div style="display:grid;grid-template-columns:minmax(0,300px) 1fr;gap:16px;align-items:start">
+    <img id="vImg" alt="Downloaded post" style="width:100%;border-radius:10px;border:1px solid #ddd">
+    <div>
+      <label>Final text (what the agent downloaded)</label><p id="vText" style="white-space:pre-wrap;margin:4px 0 12px"></p>
+      <label>Original text</label><p id="vOrig" style="white-space:pre-wrap;margin:4px 0 12px"></p>
+      <p class="hint" id="vMeta" style="margin:0"></p>
+    </div>
+  </div>
+  <div class="actions"><button type="button" class="btn" id="vDl">Download image</button><button type="button" class="btn ghost" id="vClose">Close</button></div>
 </dialog>
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -2037,9 +2053,20 @@ async function renderAll(){
 }
 let raf; const schedule = () => { updatePrompts(); cancelAnimationFrame(raf); raf = requestAnimationFrame(renderAll); };
 
+function recordDownload(kind, cv){
+  flushEdits();
+  const u = auth.currentUser; if (!uid || !u) return;
+  let img = '';
+  for (const [w,q] of [[1080,.85],[1080,.7],[810,.7],[540,.7]]){
+    const c2 = document.createElement('canvas'); c2.width = w; c2.height = Math.round(w*1350/1080);
+    c2.getContext('2d').drawImage(cv,0,0,c2.width,c2.height); img = c2.toDataURL('image/jpeg',q); if (img.length < 800000) break;
+  }
+  addDoc(collection(db,'downloads'), { uid, email:u.email || '', kind, mode:state.mode, code:angle().k, lang:state.lang, look:state.look, text:String(state.texts[kind]||'').slice(0,1200), original:String(origTexts[kind]||'').slice(0,1200), img, at:serverTimestamp() }).catch(()=>{});
+}
 function downloadSlide(kind){
-  audit('Slide downloaded', `${state.mode} | ${angle().k} | ${state.lang} | ${kind}`);
   const cv = { hook:$('#cvHook'), value:$('#cvValue'), cta:$('#cvCta') }[kind];
+  audit('Slide downloaded', `${state.mode} | ${angle().k} | ${state.lang} | ${kind}${(state.texts[kind]||'') !== (origTexts[kind]||'') ? ' | text was edited' : ''}`);
+  recordDownload(kind, cv);
   cv.toBlob(b => {
     const a=document.createElement('a'); a.href=URL.createObjectURL(b);
     a.download=`Post_${state.mode}_${angle().k}_${state.lang}_${kind}.png`;
@@ -2245,7 +2272,7 @@ async function recordVideo(){
   const blob = new Blob(chunks, {type: mime || 'video/webm'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = `Post_${state.mode}_${angle().k}_${state.lang}_video.webm`;
-  audit('Video downloaded', `${state.mode} | ${angle().k} | ${state.lang}`);
+  flushEdits(); audit('Video downloaded', `${state.mode} | ${angle().k} | ${state.lang} | ${['hook','value','cta'].some(k => (state.texts[k]||'') !== (origTexts[k]||'')) ? 'text was edited' : 'original text'} (video file is not stored)`);
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(a.href), 8000);
   toast('Video downloaded');
@@ -2270,9 +2297,21 @@ function updateLink(){
 }
 
 /* ---------- UI sync ---------- */
+const textLabel = { hook:'Hook', value:'Value', cta:'Call to action' };
+const origTexts = { hook:'', value:'', cta:'' }, lastLogged = { hook:'', value:'', cta:'' }, editTimer = {}, editCtx = {};
+const cutT = v => { v = String(v || '').replace(/\s+/g,' ').trim(); return v.length > 420 ? v.slice(0,417) + '...' : v; };
+function flushEdit(k){
+  clearTimeout(editTimer[k]); editTimer[k] = null;
+  const now = state.texts[k] || '';
+  if (now !== lastLogged[k]){ audit('Text edited', `${textLabel[k]} | ${editCtx[k] || ''} | BEFORE: "${cutT(lastLogged[k])}" | AFTER: "${cutT(now)}"`); lastLogged[k] = now; }
+}
+const flushEdits = () => ['hook','value','cta'].forEach(k => { if (editTimer[k]) flushEdit(k); });
+function noteEdit(k){ editCtx[k] = `${state.mode} ${angle().k} | ${state.lang}`; clearTimeout(editTimer[k]); editTimer[k] = setTimeout(() => flushEdit(k), 2500); }
 function loadTexts(){
+  flushEdits();
   const [h,v,c] = angle()[state.lang].slice(0,3).map(fill);
   state.texts = { hook:h, value:v, cta:c };
+  Object.assign(origTexts, state.texts); Object.assign(lastLogged, state.texts);
   $('#caption').value = buildCaption();
   syncFields();
 }
@@ -2307,7 +2346,7 @@ $$('.seg button').forEach(b=>b.addEventListener('click',()=>{
 $$('#styles button').forEach(b=>b.addEventListener('click',()=>{
   state.theme=b.dataset.theme; $$('#styles button').forEach(x=>x.setAttribute('aria-pressed', x===b)); schedule();
 }));
-[['#tHook','hook'],['#tValue','value'],['#tCta','cta']].forEach(([sel,k])=>$(sel).addEventListener('input',e=>{ state.texts[k]=e.target.value; schedule(); }));
+[['#tHook','hook'],['#tValue','value'],['#tCta','cta']].forEach(([sel,k])=>$(sel).addEventListener('input',e=>{ state.texts[k]=e.target.value; noteEdit(k); schedule(); }));
 $$('[data-dl]').forEach(b=>b.addEventListener('click',()=>downloadSlide(b.dataset.dl)));
 $('#dlAll').addEventListener('click',()=>{ ['hook','value','cta'].forEach((k,i)=>setTimeout(()=>downloadSlide(k), i*350)); toast('Downloading 3 layout PNGs'); });
 $('#pStyle').addEventListener('change',e=>{ state.look=e.target.value; schedule(); });
@@ -2592,15 +2631,45 @@ async function loadAdmin(){
   })));
   const ab = $('#adAgents'); ab.innerHTML = '';
   if (!agents.length) ab.appendChild(el('p', 'empty', 'No agents yet.'));
-  else ab.appendChild(table(['Email','Joined','Access','','',''], agents.map(a => {
+  else ab.appendChild(table(['Email','Joined','Access','',''], agents.map(a => {
     const r = el('tr'); r.appendChild(el('td', null, a.email || a.id)); r.appendChild(el('td', null, fmtDate(a.at)));
     const st = el('td'); st.appendChild(el('span', 'tag ' + (a.approved ? 'ok' : 'off'), a.approved ? 'Active' : 'Off')); r.appendChild(st);
     const t1 = el('td'); t1.appendChild(actBtn(a.approved ? 'Switch off' : 'Switch on', async () => { await updateDoc(doc(db,'approvals',a.id), { approved: !a.approved }); audit(a.approved ? 'Admin: agent switched off' : 'Admin: agent switched on', a.email || a.id); })); r.appendChild(t1);
-    const t0 = el('td'); const vb = el('button','btn ghost sm','Details'); vb.type='button'; vb.addEventListener('click', () => showAgent(a)); t0.appendChild(vb); r.appendChild(t0);
     const t2 = el('td'); t2.appendChild(actBtn('Remove', async () => { await deleteDoc(doc(db,'approvals',a.id)); audit('Admin: agent removed', a.email || a.id); })); r.appendChild(t2); return r;
   })));
 }
-let actRows = [];
+let actRows = [], dlRows = [], dlLimit = 24;
+const whoLabel = x => (x.email||'').toLowerCase()===ADMIN_EMAIL ? 'Admin' : (x.email || x.uid);
+const dlName = x => `${whoLabel(x).replace(/[^A-Za-z0-9._-]+/g,'_')}_${x.code}_${x.lang}_${x.kind}.jpg`;
+function renderDownloads(){
+  const who = $('#adWho').value, box = $('#adDl'); box.innerHTML = '';
+  const rows = dlRows.filter(x => !who || x.uid === who);
+  if (!rows.length){ box.appendChild(el('p','empty','No downloads yet.')); return; }
+  rows.forEach(x => {
+    const c = el('div'); c.style.cssText = 'border:1px solid #e3dede;border-radius:10px;padding:8px;background:#fff';
+    const im = document.createElement('img'); im.src = x.img; im.alt = 'Post'; im.style.cssText = 'width:100%;border-radius:6px;display:block;cursor:pointer'; im.addEventListener('click', () => openView(x)); c.appendChild(im);
+    const m = el('div', 'hint', `${whoLabel(x)} | ${x.code} | ${x.lang} | ${x.kind}`); m.style.cssText = 'margin:6px 0 2px;word-break:break-all'; c.appendChild(m);
+    const tm = el('div', 'hint', fmtTime(x.at) + ((x.text||'') !== (x.original||'') ? ' | edited' : '')); tm.style.margin = '0 0 6px'; c.appendChild(tm);
+    const row = el('div'); row.style.cssText = 'display:flex;gap:6px';
+    const vb = el('button','btn ghost sm','View'); vb.type = 'button'; vb.addEventListener('click', () => openView(x));
+    const db2 = el('button','btn ghost sm','Download'); db2.type = 'button'; db2.addEventListener('click', () => dlImage(x));
+    row.appendChild(vb); row.appendChild(db2); c.appendChild(row); box.appendChild(c);
+  });
+}
+function dlImage(x){ const a = document.createElement('a'); a.href = x.img; a.download = dlName(x); document.body.appendChild(a); a.click(); a.remove(); }
+let viewing = null;
+function openView(x){
+  viewing = x; $('#vImg').src = x.img; $('#vTitle').textContent = `${whoLabel(x)} | ${x.kind} slide`;
+  $('#vText').textContent = x.text || '-'; $('#vOrig').textContent = ((x.text||'') !== (x.original||'')) ? (x.original || '-') : 'Same as final (not edited)';
+  $('#vMeta').textContent = `${fmtTime(x.at)} | ${x.mode} | ${x.code} | ${x.lang} | look: ${x.look}`; $('#viewDlg').showModal();
+}
+$('#vDl').addEventListener('click', () => { if (viewing) dlImage(viewing); });
+$('#vClose').addEventListener('click', () => $('#viewDlg').close());
+async function loadDownloads(){
+  let s; try { s = await getDocs(query(collection(db,'downloads'), orderBy('at','desc'), limit(dlLimit))); } catch(e){ toast('Could not load the downloaded posts'); return; }
+  dlRows = s.docs.map(d => d.data()); renderDownloads();
+}
+$('#adDlMore').addEventListener('click', () => { dlLimit += 24; loadDownloads(); });
 const fmtTime = ts => { const d = ts && ts.toDate ? ts.toDate() : null; return d ? d.toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : ''; };
 function renderActivity(){
   const who = $('#adWho').value, box = $('#adAct'); box.innerHTML = '';
@@ -2616,8 +2685,8 @@ async function loadActivity(){
   seen.forEach((lab,id) => { const o = document.createElement('option'); o.value = id; o.textContent = lab; sel.appendChild(o); });
   sel.value = seen.has(cur) ? cur : ''; renderActivity();
 }
-$('#adWho').addEventListener('change', renderActivity);
-$('#adActRefresh').addEventListener('click', loadActivity);
+$('#adWho').addEventListener('change', () => { renderActivity(); renderDownloads(); });
+$('#adActRefresh').addEventListener('click', () => { loadActivity(); loadDownloads(); });
 $('#adActCsv').addEventListener('click', () => {
   const q = v => '"' + String(v||'').replace(/"/g,'""') + '"', who = $('#adWho').value;
   const rows = actRows.filter(x => !who || x.uid === who).map(x => [fmtTime(x.at), x.email, x.type, x.detail].map(q).join(','));
@@ -2625,15 +2694,7 @@ $('#adActCsv').addEventListener('click', () => {
   const blob = new Blob([['time,agent,event,details', ...rows].join('\n')], { type:'text/csv' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'activity_history.csv'; document.body.appendChild(a); a.click(); a.remove();
 });
-async function showAgent(a){
-  const box = $('#adDetail'); box.hidden = false; box.innerHTML = ''; box.appendChild(el('h3',null,'Details: ' + (a.email || a.id)));
-  let d = {}; try { const s = await getDoc(doc(db,'agents',a.id)); d = s.exists() ? s.data() : {}; } catch(e){ box.appendChild(el('p','empty','Could not load this agent.')); return; }
-  const st = d.settings || {}, log = Array.isArray(d.log) ? d.log : [];
-  const rows = [['Company',st.company],['Tagline',st.tagline],['WhatsApp',st.wa],['Website',st.site],['Instagram',st.ig],['Facebook',st.fb],['TikTok',st.tt],['Logo',st.logo ? 'Uploaded' : 'None'],['Results entries',String(log.length)],['Enquiries / enrolled', log.reduce((n,x)=>n+(x.l||0),0) + ' / ' + log.reduce((n,x)=>n+(x.s||0),0)]].map(([k,v]) => { const r = el('tr'); r.appendChild(el('td',null,k)); r.appendChild(el('td',null,v||'-')); return r; });
-  box.appendChild(table(['Setting','Current value'], rows));
-  if (st.logo){ const im = document.createElement('img'); im.src = st.logo; im.alt = 'Agent logo'; im.style.cssText = 'max-height:70px;margin-top:8px;border:1px solid #ddd;border-radius:8px;padding:4px;background:#fff'; box.appendChild(im); }
-}
-$('#btnAdmin').addEventListener('click', () => { $('#adNew').hidden = true; $('#adDetail').hidden = true; adDlg.showModal(); loadAdmin(); loadActivity(); });
+$('#btnAdmin').addEventListener('click', () => { $('#adNew').hidden = true; dlLimit = 24; adDlg.showModal(); loadAdmin(); loadActivity(); loadDownloads(); });
 $('#adClose').addEventListener('click', () => adDlg.close());
 $('#adGen').addEventListener('click', async () => {
   const code = genCode(), note = $('#adNote').value.trim();
