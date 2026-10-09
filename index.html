@@ -147,20 +147,44 @@ dialog{max-height:92vh;overflow:auto}
 .logoprev{width:84px;height:84px;border:1.5px dashed var(--line);border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-size:12px;color:var(--slate);overflow:hidden;background:#fff;flex:none}
 .logoprev img{width:100%;height:100%;object-fit:contain;display:block}
 .logorow input[type=file]{padding:6px;margin-bottom:6px}
+dialog h3{margin:18px 0 6px;font-size:14px;color:var(--slate)}
+.codebox{margin-top:12px;padding:12px 14px;border:1.5px solid var(--crimson);border-radius:10px;background:var(--tint);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.codebox b{font:700 26px/1 Newsreader,Georgia,serif;letter-spacing:.06em}
+.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;background:var(--mist);color:var(--slate)}
+.tag.ok{background:#E3F4E8;color:#1E7B3A}.tag.off{background:#FBE4E2;color:#B3261E}
 </style>
 </head>
 <body class="locked">
 
 <div class="gate" id="authGate" hidden>
-  <form class="gate-card" id="authForm" novalidate>
+  <div class="gate-card">
     <h1>Marketing Studio</h1>
-    <p class="hint" style="margin:0">Log in to make posts with your own logo and details.</p>
-    <div class="field"><label for="aEmail">Email</label><input id="aEmail" type="email" autocomplete="email" required></div>
-    <div class="field"><label for="aPass">Password (6+ characters)</label><input id="aPass" type="password" autocomplete="current-password" required></div>
-    <p class="gate-msg" id="aMsg" role="alert"></p>
-    <div class="btns"><button type="submit" class="btn" id="aLogin">Log in</button><button type="button" class="btn ghost" id="aCreate">Create account</button></div>
-    <p class="hint"><a href="#" id="aForgot">Forgot password?</a></p>
-  </form>
+    <form id="authForm" novalidate>
+      <p class="hint" id="gateIntro" style="margin:0">Log in to make posts with your own logo and details.</p>
+      <div class="field"><label for="aEmail">Email</label><input id="aEmail" type="email" autocomplete="email" required></div>
+      <div class="field"><label for="aPass">Password (6+ characters)</label><input id="aPass" type="password" autocomplete="current-password" required></div>
+      <div class="field" id="aCodeRow" hidden><label for="aCode">Invite code from the admin</label><input id="aCode" autocomplete="off" placeholder="XXXXX-XXXXX"></div>
+      <p class="gate-msg" id="aMsg" role="alert"></p>
+      <div class="btns"><button type="submit" class="btn" id="aSubmit">Log in</button></div>
+      <p class="hint"><a href="#" id="aToggle">New agent? Create account</a> &middot; <a href="#" id="aForgot">Forgot password?</a> &middot; <a href="#" id="aAdminLink">Admin</a></p>
+    </form>
+    <form id="redeemForm" hidden novalidate>
+      <p class="hint" style="margin:0">Your account needs an invite code from the admin before you can use the studio.</p>
+      <div class="field"><label for="rCode">Invite code</label><input id="rCode" autocomplete="off" placeholder="XXXXX-XXXXX"></div>
+      <p class="gate-msg" id="rMsg" role="alert"></p>
+      <div class="btns"><button type="submit" class="btn">Activate</button><button type="button" class="btn ghost" id="rOut">Log out</button></div>
+    </form>
+    <form id="adminForm" hidden novalidate>
+      <p class="hint" style="margin:0">Admin login</p>
+      <div class="field"><label for="adPass">Admin password</label><input id="adPass" type="password" autocomplete="current-password"></div>
+      <p class="gate-msg" id="adMsg" role="alert"></p>
+      <div class="btns"><button type="submit" class="btn">Enter</button><button type="button" class="btn ghost" id="adBack">Back</button></div>
+    </form>
+    <div id="blocked" hidden>
+      <p class="gate-msg" style="color:#B3261E">Your access is switched off. Please contact the admin.</p>
+      <div class="btns"><button type="button" class="btn ghost" id="bOut">Log out</button></div>
+    </div>
+  </div>
 </div>
 
 <header class="top">
@@ -179,6 +203,7 @@ dialog{max-height:92vh;overflow:auto}
         <button type="button" data-lang="id" aria-pressed="false" lang="id">Bahasa</button>
       </div>
       <span class="hint" id="userEmail" style="margin:0"></span>
+      <button type="button" class="btn" id="btnAdmin" hidden>Admin</button>
       <button type="button" class="btn ghost" id="btnSettings">Brand &amp; settings</button>
       <button type="button" class="btn ghost" id="btnLogout">Log out</button>
     </div>
@@ -351,12 +376,25 @@ dialog{max-height:92vh;overflow:auto}
   </form>
 </dialog>
 
+<dialog id="adminDlg" style="max-width:720px">
+  <h2>Admin</h2>
+  <p class="hint" style="margin:0">Make an invite code and give it to one agent. Each code works once.</p>
+  <div class="field" style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end">
+    <div><label for="adNote">Note (agent name)</label><input id="adNote" placeholder="e.g. Ahmad, Dubai"></div>
+    <button type="button" class="btn" id="adGen">Generate code</button>
+  </div>
+  <div class="codebox" id="adNew" hidden><b id="adNewCode"></b><button type="button" class="btn ghost sm" id="adCopy">Copy code</button></div>
+  <h3>Invite codes</h3><div id="adCodes"></div>
+  <h3>Agents</h3><div id="adAgents"></div>
+  <div class="actions"><button type="button" class="btn ghost" id="adClose">Close</button></div>
+</dialog>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, signOut, deleteUser } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, updateDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 (() => {
 'use strict';
 const $ = s => document.querySelector(s);
@@ -1909,8 +1947,16 @@ $('#exportCsv').addEventListener('click',()=>{
 });
 
 /* ---------- go ---------- */
+const ADMIN_EMAIL = 'studio-admin@premium.edu.my';
+const adminPass = v => v.length < 6 ? v + '-studio' : v;
 const gate = $('#authGate'), aMsg = $('#aMsg');
-const say = (m, ok) => { aMsg.textContent = m || ''; aMsg.classList.toggle('ok', !!ok); };
+const panels = { login:$('#authForm'), redeem:$('#redeemForm'), admin:$('#adminForm'), blocked:$('#blocked') };
+let gateMode = 'login', signingUp = false, isAdmin = false;
+const showPanel = n => { Object.entries(panels).forEach(([k,e]) => e.hidden = k !== n); document.body.classList.add('locked'); gate.hidden = false; };
+const say = (e, m, ok) => { e.textContent = m || ''; e.classList.toggle('ok', !!ok); };
+const cleanCode = v => String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+const fmtCode = c => c.slice(0,5) + '-' + c.slice(5);
+const badCode = 'That invite code is not valid or was already used.';
 const authErr = c => ({
   'auth/invalid-email':'That email address is not valid.',
   'auth/missing-password':'Enter your password.',
@@ -1923,34 +1969,129 @@ const authErr = c => ({
   'auth/network-request-failed':'No connection. Check your internet.',
   'auth/operation-not-allowed':'Email login is not turned on in Firebase yet.'
 }[c] || 'Something went wrong. Please try again.');
-const creds = () => [$('#aEmail').value.trim(), $('#aPass').value];
-$('#authForm').addEventListener('submit', async e => {
-  e.preventDefault(); say('');
-  try { await signInWithEmailAndPassword(auth, ...creds()); } catch(err){ say(authErr(err.code)); }
-});
-$('#aCreate').addEventListener('click', async () => {
-  say('');
-  try { await createUserWithEmailAndPassword(auth, ...creds()); } catch(err){ say(authErr(err.code)); }
-});
-$('#aForgot').addEventListener('click', async e => {
-  e.preventDefault(); const em = $('#aEmail').value.trim();
-  if (!em){ say('Enter your email first, then tap Forgot password.'); return; }
-  try { await sendPasswordResetEmail(auth, em); say('Reset link sent. Check your email.', true); } catch(err){ say(authErr(err.code)); }
-});
-$('#btnLogout').addEventListener('click', () => signOut(auth));
-onAuthStateChanged(auth, async user => {
+
+function setMode(m){
+  gateMode = m; say(aMsg, '');
+  $('#aCodeRow').hidden = m !== 'create';
+  $('#aSubmit').textContent = m === 'create' ? 'Create account' : 'Log in';
+  $('#aToggle').textContent = m === 'create' ? 'Already have an account? Log in' : 'New agent? Create account';
+  $('#gateIntro').textContent = m === 'create' ? 'Create your account. You need an invite code from the admin.' : 'Log in to make posts with your own logo and details.';
+  $('#aPass').autocomplete = m === 'create' ? 'new-password' : 'current-password';
+}
+async function redeem(code){
+  const u = auth.currentUser, batch = writeBatch(db);
+  batch.update(doc(db,'codes',code), { used:true, usedBy:u.uid, usedByEmail:u.email, usedAt:Date.now() });
+  batch.set(doc(db,'approvals',u.uid), { approved:true, email:u.email, code, at:Date.now() });
+  await batch.commit();
+}
+async function enter(user){
   if (!user){
-    uid = null; settings = { ...DEFAULTS }; logData = [];
-    document.body.classList.add('locked'); gate.hidden = false; $('#aPass').value = ''; return;
+    uid = null; isAdmin = false; settings = { ...DEFAULTS }; logData = [];
+    $('#aPass').value = ''; $('#adPass').value = ''; showPanel('login'); return;
   }
-  uid = user.uid; $('#userEmail').textContent = user.email || '';
+  uid = user.uid; isAdmin = (user.email || '').toLowerCase() === ADMIN_EMAIL;
+  if (!isAdmin){
+    let ap;
+    try { ap = await getDoc(doc(db,'approvals',uid)); } catch(e){ say(aMsg, 'Could not check your access. Check your connection.'); showPanel('login'); return; }
+    if (!ap.exists()){ say($('#rMsg'), ''); showPanel('redeem'); return; }
+    if (!ap.data().approved){ showPanel('blocked'); return; }
+  }
+  $('#userEmail').textContent = isAdmin ? 'Admin' : (user.email || ''); $('#btnAdmin').hidden = !isAdmin;
   let first = false;
   try { first = await loadCloud(); } catch(e){ toast('Could not load your saved settings'); }
   gate.hidden = true; document.body.classList.remove('locked');
   applyBrand(); state.angle = dayIdx() % C[state.mode].length;
   refresh(); renderLog();
   if (first) openSettings();
+}
+$('#aToggle').addEventListener('click', e => { e.preventDefault(); setMode(gateMode === 'login' ? 'create' : 'login'); });
+$('#aAdminLink').addEventListener('click', e => { e.preventDefault(); say($('#adMsg'), ''); showPanel('admin'); });
+$('#adBack').addEventListener('click', () => showPanel('login'));
+$('#rOut').addEventListener('click', () => { setMode('login'); signOut(auth); });
+$('#bOut').addEventListener('click', () => { setMode('login'); signOut(auth); });
+$('#btnLogout').addEventListener('click', () => { setMode('login'); signOut(auth); });
+$('#authForm').addEventListener('submit', async e => {
+  e.preventDefault(); say(aMsg, '');
+  const em = $('#aEmail').value.trim(), pw = $('#aPass').value;
+  if (em.toLowerCase() === ADMIN_EMAIL){ say(aMsg, 'Use the Admin link for the admin login.'); return; }
+  if (gateMode === 'login'){
+    try { await signInWithEmailAndPassword(auth, em, pw); } catch(err){ say(aMsg, authErr(err.code)); }
+    return;
+  }
+  const code = cleanCode($('#aCode').value);
+  if (code.length !== 10){ say(aMsg, 'Enter the 10-character invite code from the admin.'); return; }
+  signingUp = true;
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, em, pw);
+    try { await redeem(code); }
+    catch(err){
+      try { await deleteUser(cred.user); } catch(_){ await signOut(auth); }
+      signingUp = false; say(aMsg, badCode); return;
+    }
+    signingUp = false; await enter(auth.currentUser);
+  } catch(err){ signingUp = false; say(aMsg, authErr(err.code)); }
 });
+$('#redeemForm').addEventListener('submit', async e => {
+  e.preventDefault(); say($('#rMsg'), '');
+  const code = cleanCode($('#rCode').value);
+  if (code.length !== 10){ say($('#rMsg'), 'Enter the 10-character invite code.'); return; }
+  try { await redeem(code); await enter(auth.currentUser); } catch(err){ say($('#rMsg'), badCode); }
+});
+$('#adminForm').addEventListener('submit', async e => {
+  e.preventDefault(); say($('#adMsg'), '');
+  try { await signInWithEmailAndPassword(auth, ADMIN_EMAIL, adminPass($('#adPass').value)); }
+  catch(err){ say($('#adMsg'), /invalid-credential|wrong-password|user-not-found/.test(err.code||'') ? 'Wrong password.' : authErr(err.code)); }
+});
+$('#aForgot').addEventListener('click', async e => {
+  e.preventDefault(); const em = $('#aEmail').value.trim();
+  if (!em){ say(aMsg, 'Enter your email first, then tap Forgot password.'); return; }
+  try { await sendPasswordResetEmail(auth, em); say(aMsg, 'Reset link sent. Check your email.', true); } catch(err){ say(aMsg, authErr(err.code)); }
+});
+
+/* ---------- admin panel ---------- */
+const adDlg = $('#adminDlg');
+const genCode = () => { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', r = crypto.getRandomValues(new Uint8Array(10)); return Array.from(r, v => A[v % 32]).join(''); };
+const fmtDate = t => t ? new Date(t).toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '';
+function table(heads, rows){
+  const tb = el('table'), h = el('tr'); heads.forEach(x => h.appendChild(el('th', null, x))); tb.appendChild(h); rows.forEach(r => tb.appendChild(r)); return tb;
+}
+function actBtn(label, fn){ const b = el('button', 'btn ghost sm', label); b.type = 'button'; b.addEventListener('click', async () => { b.disabled = true; try { await fn(); } catch(e){ toast('Action failed. Try again.'); } await loadAdmin(); }); return b; }
+async function loadAdmin(){
+  let cs, as;
+  try { [cs, as] = await Promise.all([getDocs(collection(db,'codes')), getDocs(collection(db,'approvals'))]); }
+  catch(e){ toast('Could not load the admin lists'); return; }
+  const codes = cs.docs.map(d => ({ id:d.id, ...d.data() })).sort((a,b) => (b.createdAt||0) - (a.createdAt||0));
+  const agents = as.docs.map(d => ({ id:d.id, ...d.data() })).sort((a,b) => (b.at||0) - (a.at||0));
+  const cb = $('#adCodes'); cb.innerHTML = '';
+  if (!codes.length) cb.appendChild(el('p', 'empty', 'No codes yet.'));
+  else cb.appendChild(table(['Code','Note','Status','',''], codes.map(c => {
+    const r = el('tr'); r.appendChild(el('td', null, fmtCode(c.id))); r.appendChild(el('td', null, c.note || ''));
+    const st = el('td'); const tag = el('span', 'tag' + (c.used ? ' ok' : ''), c.used ? 'Used by ' + (c.usedByEmail || '') : 'Unused'); st.appendChild(tag); r.appendChild(st);
+    const t1 = el('td'); if (!c.used){ const cp = el('button', 'btn ghost sm', 'Copy'); cp.type = 'button'; cp.addEventListener('click', () => copy(fmtCode(c.id), 'Code copied')); t1.appendChild(cp); } r.appendChild(t1);
+    const t2 = el('td'); t2.appendChild(actBtn('Delete', () => deleteDoc(doc(db,'codes',c.id)))); r.appendChild(t2); return r;
+  })));
+  const ab = $('#adAgents'); ab.innerHTML = '';
+  if (!agents.length) ab.appendChild(el('p', 'empty', 'No agents yet.'));
+  else ab.appendChild(table(['Email','Joined','Access','',''], agents.map(a => {
+    const r = el('tr'); r.appendChild(el('td', null, a.email || a.id)); r.appendChild(el('td', null, fmtDate(a.at)));
+    const st = el('td'); st.appendChild(el('span', 'tag ' + (a.approved ? 'ok' : 'off'), a.approved ? 'Active' : 'Off')); r.appendChild(st);
+    const t1 = el('td'); t1.appendChild(actBtn(a.approved ? 'Switch off' : 'Switch on', () => updateDoc(doc(db,'approvals',a.id), { approved: !a.approved }))); r.appendChild(t1);
+    const t2 = el('td'); t2.appendChild(actBtn('Remove', () => deleteDoc(doc(db,'approvals',a.id)))); r.appendChild(t2); return r;
+  })));
+}
+$('#btnAdmin').addEventListener('click', () => { $('#adNew').hidden = true; adDlg.showModal(); loadAdmin(); });
+$('#adClose').addEventListener('click', () => adDlg.close());
+$('#adGen').addEventListener('click', async () => {
+  const code = genCode();
+  try { await setDoc(doc(db,'codes',code), { used:false, note:$('#adNote').value.trim(), createdAt:Date.now() }); }
+  catch(e){ toast('Could not create the code'); return; }
+  $('#adNewCode').textContent = fmtCode(code); $('#adNew').hidden = false; $('#adNote').value = '';
+  copy(fmtCode(code), 'Code copied'); loadAdmin();
+});
+$('#adCopy').addEventListener('click', () => copy($('#adNewCode').textContent, 'Code copied'));
+
+onAuthStateChanged(auth, u => { if (!signingUp) enter(u); });
+setMode('login');
 })();
 </script>
 </body>
